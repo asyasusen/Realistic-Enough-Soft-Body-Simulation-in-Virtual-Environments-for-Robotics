@@ -1,18 +1,16 @@
-//NOTE
-//Default Solver Iterations and change it from 6 to 30
-//Default Solver Velocity Iterations and change it from 1 to 10
-
-
 using UnityEngine;
 
 public class BezierCableGenerator : MonoBehaviour
 {
     [Header("Curve Settings")]
-    [SerializeField] private Vector3[] controlPoints = new Vector3[4] {
+    [Tooltip("Add as many points as you want! The cable will smoothly connect all of them.")]
+    [SerializeField] private Vector3[] controlPoints = new Vector3[6] {
         new Vector3(0, 0, 0),    
-        new Vector3(3, 0, 0),    
-        new Vector3(-3, -4, 0),  
-        new Vector3(0, -4, 0)    
+        new Vector3(2, -1, 0),    
+        new Vector3(-2, -2, 1),  
+        new Vector3(2, -3, -1),
+        new Vector3(-1, -4, 0),
+        new Vector3(0, -5, 0)
     };
 
     public Vector3[] ControlPoints 
@@ -22,7 +20,7 @@ public class BezierCableGenerator : MonoBehaviour
     }
 
     [Header("Cable Settings")]
-    [SerializeField] private int segmentCount = 20;
+    [SerializeField] private int segmentCount = 30;
     [SerializeField] private float cableRadius = 0.05f;
     [SerializeField] private float massPerSegment = 1.0f; 
     [SerializeField] private float stiffness = 100f; 
@@ -32,59 +30,80 @@ public class BezierCableGenerator : MonoBehaviour
     [SerializeField] private Vector3 customGravity = new Vector3(0, -20f, 0); 
 
     [Header("Advanced Stability Settings")]
-    [Tooltip("Acts as air resistance. Higher = falls slower, but stops flying away when swung.")]
     [SerializeField] private float linearDamping = 0.5f; 
-    [Tooltip("Resistance to twisting and spinning.")]
     [SerializeField] private float angularDamping = 0.5f;
-    [Tooltip("Internal friction in the joints. Higher = less wobbly, but stiffer to bend.")]
     [SerializeField] private float jointFriction = 1.0f;
-    [Tooltip("Hard cap on how fast joints can push apart if they accidentally overlap.")]
     [SerializeField] private float maxDepenetrationVelocity = 1f;
-    [Tooltip("Hard cap on rotational speed.")]
     [SerializeField] private float maxAngularVelocity = 15f;
-    [Tooltip("Hard cap on movement speed. Lower this if the cable flies away too easily!")]
-    [SerializeField] private float maxLinearVelocity = 20f;
+    [SerializeField] private float maxLinearVelocity = 15f; 
 
     [Header("Visual Settings")]
     [SerializeField] private bool useLineRenderer = true;
+    [Tooltip("Drag your Material here.")]
     [SerializeField] private Material cableMaterial;
+    
+    [Header("Connector Attachment")]
+    [Tooltip("Drag your Plug Prefab here")]
+    public GameObject plugPrefab;
+    
+    [Tooltip("Name assigned to the spawned plug (Must match SocketTrigger target)")]
+    public string plugInstanceName = "Rj45";
+
+    [Tooltip("Local offset for the plug (X=Left/Right, Y=Up/Down, Z=Forward/Backward)")]
+    public Vector3 plugPositionOffset = new Vector3(0, 0, 0.05f);
+
+    [Tooltip("Rotate the plug so its back faces the cable. Example: (0, 90, 0)")]
+    public Vector3 plugRotationOffset = new Vector3(180, 0, 0);
 
     private ArticulationBody[] generatedBodies;
 
     public Vector3 GetPoint(float t)
     {
-        t = Mathf.Clamp01(t);
-        float u = 1f - t;
-        float tt = t * t;
-        float uu = u * u;
-        float uuu = uu * u;
-        float ttt = tt * t;
-
-        Vector3 p = uuu * controlPoints[0];
-        p += 3f * uu * t * controlPoints[1];
-        p += 3f * u * tt * controlPoints[2];
-        p += ttt * controlPoints[3];
+        if (controlPoints == null || controlPoints.Length < 2) return transform.position;
         
-        return transform.TransformPoint(p); 
+        t = Mathf.Clamp01(t);
+        if (t == 1f) return transform.TransformPoint(controlPoints[controlPoints.Length - 1]);
+
+        float p = t * (controlPoints.Length - 1);
+        int i = Mathf.FloorToInt(p);
+        float localT = p - i;
+
+        Vector3 p0 = i == 0 ? controlPoints[0] - (controlPoints[1] - controlPoints[0]) : controlPoints[i - 1];
+        Vector3 p1 = controlPoints[i];
+        Vector3 p2 = controlPoints[i + 1];
+        Vector3 p3 = i + 2 >= controlPoints.Length ? controlPoints[i + 1] + (controlPoints[i + 1] - controlPoints[i]) : controlPoints[i + 2];
+
+        Vector3 localPos = GetCatmullRomPosition(localT, p0, p1, p2, p3);
+        return transform.TransformPoint(localPos); 
+    }
+
+    private Vector3 GetCatmullRomPosition(float t, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3)
+    {
+        Vector3 a = 2f * p1;
+        Vector3 b = p2 - p0;
+        Vector3 c = 2f * p0 - 5f * p1 + 4f * p2 - p3;
+        Vector3 d = -p0 + 3f * p1 - 3f * p2 + p3;
+        return 0.5f * (a + (b * t) + (c * t * t) + (d * t * t * t));
     }
 
     public Vector3 GetTangent(float t)
     {
-        t = Mathf.Clamp01(t);
-        float u = 1f - t;
-        
-        Vector3 tangent = 
-            3f * u * u * (controlPoints[1] - controlPoints[0]) +
-            6f * u * t * (controlPoints[2] - controlPoints[1]) +
-            3f * t * t * (controlPoints[3] - controlPoints[2]);
-
-        return transform.TransformDirection(tangent.normalized);
+        float tA = Mathf.Clamp01(t - 0.01f);
+        float tB = Mathf.Clamp01(t + 0.01f);
+        return (GetPoint(tB) - GetPoint(tA)).normalized;
     }
 
     public void GenerateCable()
     {
         for (int i = transform.childCount - 1; i >= 0; i--) {
-            DestroyImmediate(transform.GetChild(i).gameObject);
+            GameObject child = transform.GetChild(i).gameObject;
+            if (Application.isPlaying) {
+
+                child.SetActive(false); 
+                Destroy(child);
+            } else {
+                DestroyImmediate(child);
+            }
         }
 
         generatedBodies = new ArticulationBody[segmentCount];
@@ -115,7 +134,13 @@ public class BezierCableGenerator : MonoBehaviour
             colliders[i] = col; 
 
             GameObject visual = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-            DestroyImmediate(visual.GetComponent<Collider>()); 
+            Collider visualCollider = visual.GetComponent<Collider>();
+            if (Application.isPlaying) {
+                visualCollider.enabled = false; 
+                Destroy(visualCollider);       
+            } else {
+                DestroyImmediate(visualCollider);
+            }
             visual.name = "Mesh";
             visual.transform.SetParent(segmentNode.transform);
             visual.transform.localPosition = Vector3.zero;
@@ -127,7 +152,6 @@ public class BezierCableGenerator : MonoBehaviour
             ab.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
             
             ab.useGravity = false; 
-
             ab.linearDamping = this.linearDamping;           
             ab.angularDamping = this.angularDamping;          
             ab.jointFriction = this.jointFriction;           
@@ -204,10 +228,18 @@ public class BezierCableGenerator : MonoBehaviour
         else
         {
             LineRenderer lr = gameObject.GetComponent<LineRenderer>();
-            if (lr != null) DestroyImmediate(lr);
-            
+            if (lr != null) 
+            {
+                if (Application.isPlaying) Destroy(lr);
+                else DestroyImmediate(lr);
+            }
+
             SmoothCableVisuals visuals = gameObject.GetComponent<SmoothCableVisuals>();
-            if (visuals != null) DestroyImmediate(visuals);
+            if (visuals != null) 
+            {
+                if (Application.isPlaying) Destroy(visuals);
+                else DestroyImmediate(visuals);
+            }
 
             for(int i = 0; i < segmentCount; i++) 
             {
@@ -218,6 +250,50 @@ public class BezierCableGenerator : MonoBehaviour
                     if (cableMaterial != null) blockyMesh.sharedMaterial = cableMaterial;
                 }
             }
+        }
+        if (plugPrefab != null)
+        {
+            GameObject head = Instantiate(plugPrefab);
+            head.name = plugInstanceName;
+            
+            ArticulationBody lastSegment = generatedBodies[segmentCount - 1];
+            
+            Vector3 finalTangent = GetTangent(1f);
+            
+            // 1. Set the rotation first
+            if (finalTangent != Vector3.zero) 
+            {
+                head.transform.rotation = Quaternion.LookRotation(finalTangent) * Quaternion.Euler(plugRotationOffset); 
+            }
+
+            // 2. Apply the offset relative to the plug's newly calculated rotation
+            head.transform.position = lastSegment.transform.position + (head.transform.rotation * plugPositionOffset);
+
+            head.transform.SetParent(lastSegment.transform, true);
+            
+            ArticulationBody headAB = head.GetComponent<ArticulationBody>();
+            if (headAB == null) headAB = head.AddComponent<ArticulationBody>();
+            
+            headAB.jointType = ArticulationJointType.FixedJoint;
+            
+
+            headAB.mass = massPerSegment * 1.5f; 
+            
+            Collider[] headColliders = head.GetComponentsInChildren<Collider>();
+            
+            int segmentsToIgnore = Mathf.Min(3, segmentCount);
+            for (int i = segmentCount - 1; i >= segmentCount - segmentsToIgnore; i--)
+            {
+                if (colliders[i] != null) 
+                {
+                    foreach (Collider hc in headColliders)
+                    {
+                        Physics.IgnoreCollision(hc, colliders[i], true);
+                    }
+                }
+            }
+            
+      
         }
     }
 

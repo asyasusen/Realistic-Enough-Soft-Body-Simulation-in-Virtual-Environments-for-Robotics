@@ -24,9 +24,12 @@ public class BezierCableEditor : Editor
 
     private void OnSceneGUI()
     {
-        if (generator.ControlPoints == null || generator.ControlPoints.Length < 4) return;
+        if (generator.ControlPoints == null || generator.ControlPoints.Length < 2) return;
 
-        for (int i = 0; i < 4; i++)
+        int count = generator.ControlPoints.Length;
+
+        // 1. Draw all handles and labels dynamically
+        for (int i = 0; i < count; i++)
         {
             Vector3 worldPoint = generator.transform.TransformPoint(generator.ControlPoints[i]);
             
@@ -45,21 +48,27 @@ public class BezierCableEditor : Editor
             }
         }
 
+        // 2. Draw the visual path connecting the dots (straight lines)
         Handles.color = Color.gray;
-        Handles.DrawDottedLine(
-            generator.transform.TransformPoint(generator.ControlPoints[0]), 
-            generator.transform.TransformPoint(generator.ControlPoints[1]), 
-            4f);
-        Handles.DrawDottedLine(
-            generator.transform.TransformPoint(generator.ControlPoints[2]), 
-            generator.transform.TransformPoint(generator.ControlPoints[3]), 
-            4f);
+        for (int i = 0; i < count - 1; i++)
+        {
+            Handles.DrawDottedLine(
+                generator.transform.TransformPoint(generator.ControlPoints[i]), 
+                generator.transform.TransformPoint(generator.ControlPoints[i+1]), 
+                4f);
+        }
 
-        Vector3 p0 = generator.transform.TransformPoint(generator.ControlPoints[0]);
-        Vector3 p1 = generator.transform.TransformPoint(generator.ControlPoints[1]);
-        Vector3 p2 = generator.transform.TransformPoint(generator.ControlPoints[2]);
-        Vector3 p3 = generator.transform.TransformPoint(generator.ControlPoints[3]);
+        // 3. Draw the actual smooth continuous curve
+        Handles.color = Color.cyan;
+        int resolution = 20 * count; // Calculate enough points to make the visual line look perfectly smooth
+        Vector3[] smoothCurvePoints = new Vector3[resolution];
         
-        Handles.DrawBezier(p0, p3, p1, p2, Color.cyan, null, 4f);
+        for(int i = 0; i < resolution; i++)
+        {
+            float t = i / (float)(resolution - 1);
+            smoothCurvePoints[i] = generator.GetPoint(t);
+        }
+        
+        Handles.DrawPolyLine(smoothCurvePoints);
     }
 }
