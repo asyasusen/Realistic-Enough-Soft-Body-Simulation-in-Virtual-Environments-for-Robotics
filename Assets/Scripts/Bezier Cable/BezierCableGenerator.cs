@@ -55,6 +55,8 @@ public class BezierCableGenerator : MonoBehaviour
     [Tooltip("Rotate the plug so its back faces the cable. Example: (0, 90, 0)")]
     public Vector3 plugRotationOffset = new Vector3(180, 0, 0);
 
+    public ArticulationBody PlugBody { get; private set; }
+
     private ArticulationBody[] generatedBodies;
 
     public Vector3 GetPoint(float t)
@@ -106,6 +108,7 @@ public class BezierCableGenerator : MonoBehaviour
             }
         }
 
+        PlugBody = null; 
         generatedBodies = new ArticulationBody[segmentCount];
         ArticulationBody previousBody = null;
         float step = 1f / (segmentCount - 1);
@@ -251,32 +254,27 @@ public class BezierCableGenerator : MonoBehaviour
                 }
             }
         }
+
         if (plugPrefab != null)
         {
             GameObject head = Instantiate(plugPrefab);
             head.name = plugInstanceName;
             
             ArticulationBody lastSegment = generatedBodies[segmentCount - 1];
-            
             Vector3 finalTangent = GetTangent(1f);
             
-            // 1. Set the rotation first
             if (finalTangent != Vector3.zero) 
             {
                 head.transform.rotation = Quaternion.LookRotation(finalTangent) * Quaternion.Euler(plugRotationOffset); 
             }
 
-            // 2. Apply the offset relative to the plug's newly calculated rotation
             head.transform.position = lastSegment.transform.position + (head.transform.rotation * plugPositionOffset);
-
             head.transform.SetParent(lastSegment.transform, true);
             
             ArticulationBody headAB = head.GetComponent<ArticulationBody>();
             if (headAB == null) headAB = head.AddComponent<ArticulationBody>();
             
             headAB.jointType = ArticulationJointType.FixedJoint;
-            
-
             headAB.mass = massPerSegment * 1.5f; 
             
             Collider[] headColliders = head.GetComponentsInChildren<Collider>();
@@ -293,7 +291,7 @@ public class BezierCableGenerator : MonoBehaviour
                 }
             }
             
-      
+            PlugBody = headAB;
         }
     }
 

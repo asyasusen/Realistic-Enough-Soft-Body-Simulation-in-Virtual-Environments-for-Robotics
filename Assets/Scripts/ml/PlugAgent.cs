@@ -3,148 +3,121 @@ using Unity.MLAgents;
 using Unity.MLAgents.Actuators;
 using Unity.MLAgents.Sensors;
 
+[RequireComponent(typeof(PlugActuator), typeof(PlugInputHandler))]
 public class PlugAgent : Agent
 {
     [Header("Environment References")]
     [SerializeField] private BezierCableGenerator cableGenerator;
     [SerializeField] private Transform socketTransform;
-    [SerializeField] private Camera mainCamera;
-
-    [Header("Human Drag Physics")]
-    public float pullForce = 500f;
-    public float dragDamping = 50f;
-    public float maxPullForce = 150f;
-    public float scrollSensitivity = 1.5f;
-
-    [Header("Rotation Physics")]
-    public float rotationTorque = 500f; 
-    public float angularDamping = 50f;
-    public float maxTorque = 150f;
+    [Tooltip("Place an empty GameObject just outside the socket hole and assign it here.")]
+    [SerializeField] private Transform entranceTransform; 
+    [Tooltip("Place an empty GameObject exactly at the center of the socket hole.")]
+    [SerializeField] private Transform targetHoleTransform;
     
+    [Header("Agent Settings")]
+    public int maxPatienceSteps = 2000;
+
+    // Component References
+    private PlugActuator actuator;
+    private PlugInputHandler inputHandler;
     private ArticulationBody plugBody;
     private ArticulationBody clipBody;
-    private float originalClipTarget;
+    private Transform plugTipTransform;
 
-    private bool isDragging = false;
-    private bool isSqueezing = false;
-    private float currentPitch = 0f;
-    private float currentRoll = 0f;
-    private Vector3 targetPosition;
-    private float cameraZDistance;
+    // Reward State
+    private int stepsSinceProgress;
+    private float closestDistanceReached;
+    private int highestCheckpointReached = -1; 
 
-    public override void Initialize() { }
+    public override void Initialize()
+    {
+        actuator = GetComponent<PlugActuator>();
+        inputHandler = GetComponent<PlugInputHandler>();
+    }
 
     public override void OnEpisodeBegin()
     {
         cableGenerator.GenerateCable();
+        FindAndSetupBodies();
         
-        Transform plugTransform = null;
-        
-
-        Transform[] allChildren = cableGenerator.GetComponentsInChildren<Transform>(false);
-        
-        foreach (Transform child in allChildren)
+        if (plugBody != null && clipBody != null)
         {
-            if (child.name == cableGenerator.plugInstanceName)
-            {
-                plugTransform = child;
-                break;
-            }
+            actuator.Initialize(plugBody, clipBody);
+            inputHandler.Initialize(plugBody, clipBody);
         }
 
-        if (plugTransform != null)
+        stepsSinceProgress = 0;
+        highestCheckpointReached = -1;
+        
+        if (entranceTransform != null && plugBody != null)
         {
-            plugBody = plugTransform.GetComponent<ArticulationBody>();
+            closestDistanceReached = Vector3.Distance(plugBody.transform.position, entranceTransform.position);
+        }
+    }
+
+    private void FindAndSetupBodies()
+    {
+        // Zero-allocation fetch straight from the generator
+        plugBody = cableGenerator.PlugBody;
+
+        if (plugBody != null)
+        {
+            plugBody.ResetCenterOfMass(); 
             
-            ArticulationBody[] bodies = plugTransform.GetComponentsInChildren<ArticulationBody>();
+            Collider[] internalColliders = plugBody.GetComponentsInChildren<Collider>();
+            for (int i = 0; i < internalColliders.Length; i++)
+            {
+                for (int j = i + 1; j < internalColliders.Length; j++)
+                {
+                    Physics.IgnoreCollision(internalColliders[i], internalColliders[j], true);
+                }
+            }
+            
+            ArticulationBody[] bodies = plugBody.GetComponentsInChildren<ArticulationBody>();
             foreach (var ab in bodies)
             {
                 if (ab.jointType == ArticulationJointType.RevoluteJoint)
                 {
                     clipBody = ab;
-                    originalClipTarget = clipBody.xDrive.target;
+                    break;
+                }
+            }
+            Transform[] allChildren = plugBody.GetComponentsInChildren<Transform>();
+            foreach (Transform child in allChildren)
+            {
+                if (child.name == "Tip") 
+                {
+                    plugTipTransform = child;
                     break;
                 }
             }
             
-            plugBody.linearVelocity = Vector3.zero;
-            plugBody.angularVelocity = Vector3.zero;
-            isDragging = false; 
+            if (plugTipTransform == null) 
+                Debug.LogError("Could not find a child named 'Tip' on the Plug Prefab!");
         }
-        else
-        {
-            Debug.LogError($"Agent Reset Failed: Could not find generated plug named '{cableGenerator.plugInstanceName}'.");
-        }
-    }
-
-    void Update()
-    {
-        if (plugBody == null) return;
-
-        isSqueezing = Input.GetMouseButton(1);
-        currentPitch = Input.GetAxis("Vertical");
-        currentRoll = -Input.GetAxis("Horizontal");
-
-        // 1. Raycast to see if we clicked the plug
-        if (Input.GetMouseButtonDown(0))
-        {
-            Ray ray = mainCamera.ScreenPointToRay(Input.mousePosition);
-            if (Physics.Raycast(ray, out RaycastHit hit))
-            {
-                ArticulationBody hitBody = hit.collider.GetComponentInParent<ArticulationBody>();
-                
-                if (hitBody != null)
-                {
-                    if (hitBody == plugBody || hitBody == clipBody || hitBody.transform.IsChildOf(plugBody.transform))
-                    {
-                        isDragging = true;
-                        cameraZDistance = mainCamera.WorldToScreenPoint(plugBody.transform.position).z;
-                        Debug.Log("<color=cyan><b>SUCCESS: Grabbed the RJ45 Plug!</b></color>");
-                    }
-                    else
-                    {
-                        Debug.Log($"<color=yellow>Missed! You clicked on: {hitBody.name} instead of the plug.</color>");
-                    }
-                }
-                else
-                {
-                    Debug.Log($"Hit an object with no ArticulationBody: {hit.collider.name}");
-                }
-            }
-        }
-
-        // 2. Update target position while dragging
-        if (Input.GetMouseButton(0) && isDragging)
-        {
-            float scroll = Input.mouseScrollDelta.y;
-            cameraZDistance += scroll * scrollSensitivity;
-            cameraZDistance = Mathf.Max(0.5f, cameraZDistance);
-
-            Vector3 screenPosition = new Vector3(Input.mousePosition.x, Input.mousePosition.y, cameraZDistance);
-            targetPosition = mainCamera.ScreenToWorldPoint(screenPosition);
-        }
-
-        // 3. Let go
-        if (Input.GetMouseButtonUp(0))
-        {
-            if (isDragging) Debug.Log("Released the plug.");
-            isDragging = false;
-        }
+        
     }
 
     public override void CollectObservations(VectorSensor sensor)
     {
-        if (plugBody == null) 
+        if (plugBody == null || plugTipTransform == null) 
         {
             for (int i = 0; i < 14; i++) sensor.AddObservation(0f);
             return;
         }
 
-        sensor.AddObservation(plugBody.transform.position);
-        sensor.AddObservation(socketTransform.position);
-        sensor.AddObservation(socketTransform.position - plugBody.transform.position);
-        sensor.AddObservation(plugBody.transform.rotation);
+        // 1. Relative Position (3 obs)
+        sensor.AddObservation(targetHoleTransform.position - plugTipTransform.position);        
+        // 2. Relative Rotation (4 obs) - THIS IS CRITICAL
+        // It tells the agent how misaligned it is from the socket's ideal rotation
+        Quaternion relativeRotation = Quaternion.Inverse(socketTransform.rotation) * plugBody.transform.rotation;
+        sensor.AddObservation(relativeRotation);
 
+        // 3. Velocities (6 obs)
+        sensor.AddObservation(plugBody.linearVelocity);
+        sensor.AddObservation(plugBody.angularVelocity);
+
+        // 4. Clip State (1 obs)
         bool clipSqueezed = clipBody != null && Mathf.Approximately(clipBody.xDrive.target, clipBody.xDrive.upperLimit);
         sensor.AddObservation(clipSqueezed ? 1.0f : 0.0f);
     }
@@ -153,38 +126,75 @@ public class PlugAgent : Agent
     {
         if (plugBody == null) return;
 
-        // Linear Force
         Vector3 actionForce = new Vector3(
             actions.ContinuousActions[0],
             actions.ContinuousActions[1],
             actions.ContinuousActions[2]
         );
-        plugBody.AddForce(actionForce * maxPullForce, ForceMode.Acceleration);
-
-        // Rotational Torque
-        float pitchInput = actions.ContinuousActions[3]; 
-        float rollInput = actions.ContinuousActions[4];  
-
-        Vector3 torqueDirection = (plugBody.transform.right * pitchInput) + (plugBody.transform.forward * rollInput);
-        Vector3 appliedTorque = (torqueDirection * rotationTorque) - (plugBody.angularVelocity * angularDamping);
         
-        if (appliedTorque.magnitude > maxTorque)
+        actuator.ApplyLinearForce(actionForce);
+
+        bool isGripped = actionForce.magnitude > 0.01f || inputHandler.IsDragging;
+
+        if (isGripped) actuator.ApplyRotation(actions.ContinuousActions[3], actions.ContinuousActions[4]);
+        else actuator.SyncTargetRotation();
+
+        actuator.ApplySqueeze(actions.DiscreteActions[0] == 1);
+
+        HandleRewards();
+    }
+
+    private void HandleRewards()
+    {
+        // 1. Math-based approach (Only useful BEFORE entering the socket)
+        if (entranceTransform != null && highestCheckpointReached < 0) 
         {
-            appliedTorque = appliedTorque.normalized * maxTorque;
+            float currentDistance = Vector3.Distance(plugTipTransform.position, entranceTransform.position);            
+            if (currentDistance < closestDistanceReached)
+            {
+                float newProgress = closestDistanceReached - currentDistance;
+                AddReward(newProgress * 1.0f); 
+                closestDistanceReached = currentDistance; 
+                stepsSinceProgress = 0; 
+            }
+            else
+            {
+                stepsSinceProgress++;
+            }
+        }
+        else 
+        {
+            stepsSinceProgress++;
         }
 
-        plugBody.AddTorque(appliedTorque, ForceMode.Acceleration);
-
-        // Squeeze
-        int squeezeAction = actions.DiscreteActions[0];
-        if (clipBody != null)
+        if (plugBody != null && socketTransform != null)
         {
-            ArticulationDrive drive = clipBody.xDrive;
-            drive.target = (squeezeAction == 1) ? drive.upperLimit : originalClipTarget;
-            clipBody.xDrive = drive;
+            // Calculate the absolute degree difference between plug and socket rotation
+            float alignmentAngle = Quaternion.Angle(plugBody.transform.rotation, socketTransform.rotation);
+
+            if (alignmentAngle > 27f)
+            {
+                // Punish for being misaligned (scales slightly so being 90 deg off is worse than 30)
+                float penalty = (alignmentAngle / 180f) * -0.01f; 
+                AddReward(penalty);
+            }
+            else if (highestCheckpointReached >= 0)
+            {
+                // Bonus for maintaining good alignment once inside the tunnel
+                AddReward(0.001f);
+            }
         }
 
-        AddReward(-0.001f);
+        // 2. Kill Switch (Patience)
+        if (stepsSinceProgress >= maxPatienceSteps)
+        {
+            AddReward(-1.0f); 
+            EndEpisode();
+            return; 
+        }
+
+        // Base time penalty
+        AddReward(-0.0005f);
     }
 
     public override void Heuristic(in ActionBuffers actionsOut)
@@ -192,33 +202,34 @@ public class PlugAgent : Agent
         var continuousActionsOut = actionsOut.ContinuousActions;
         var discreteActionsOut = actionsOut.DiscreteActions;
 
-        discreteActionsOut[0] = isSqueezing ? 1 : 0;
+        discreteActionsOut[0] = inputHandler.IsSqueezing ? 1 : 0;
 
-        Vector3 normalizedForce = Vector3.zero;
-
-        if (isDragging)
-        {
-            Vector3 displacement = targetPosition - plugBody.transform.position;
-            Vector3 rawForce = (displacement * pullForce) - (plugBody.linearVelocity * dragDamping);
-
-            if (rawForce.magnitude > maxPullForce)
-            {
-                rawForce = rawForce.normalized * maxPullForce;
-            }
-            
-            normalizedForce = rawForce / maxPullForce;
-        }
+        Vector3 normalizedForce = inputHandler.CalculateHeuristicForce();
 
         continuousActionsOut[0] = normalizedForce.x;
         continuousActionsOut[1] = normalizedForce.y;
         continuousActionsOut[2] = normalizedForce.z;
-        continuousActionsOut[3] = currentPitch;
-        continuousActionsOut[4] = currentRoll;
+        continuousActionsOut[3] = inputHandler.CurrentPitch;
+        continuousActionsOut[4] = inputHandler.CurrentRoll;
+    }
+    public void ReachCheckpoint(int checkpointID, float reward)
+    {
+        // Only reward if it's a new, deeper checkpoint
+        if (checkpointID > highestCheckpointReached)
+        {
+            highestCheckpointReached = checkpointID;
+            AddReward(reward);
+            
+            // Critical: Reset the death timer since the agent made legitimate progress
+            stepsSinceProgress = 0; 
+            
+            Debug.Log($"<color=cyan>Checkpoint {checkpointID} Reached! Reward given.</color>");
+        }
     }
 
     public void SuccessfullyPluggedIn()
     {
-        AddReward(5.0f);
+        AddReward(10.0f);
         EndEpisode();
     }
 }
