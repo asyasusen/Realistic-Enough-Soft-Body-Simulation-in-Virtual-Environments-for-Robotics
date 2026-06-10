@@ -14,6 +14,7 @@ public class PlugInputHandler : MonoBehaviour
     public bool IsDragging { get; private set; }
     public bool IsSqueezing { get; private set; }
     public float CurrentPitch { get; private set; }
+    public float CurrentYaw { get; private set; } 
     public float CurrentRoll { get; private set; }
 
     private float cameraZDistance;
@@ -36,7 +37,10 @@ public class PlugInputHandler : MonoBehaviour
 
         IsSqueezing = Input.GetMouseButton(1);
         CurrentPitch = Input.GetAxis("Vertical");
-        CurrentRoll = -Input.GetAxis("Horizontal");
+        CurrentYaw = -Input.GetAxis("Horizontal");        
+        CurrentRoll = 0f;
+        if (Input.GetKey(KeyCode.Q)) CurrentRoll = 1f;
+        if (Input.GetKey(KeyCode.E)) CurrentRoll = -1f;
 
         if (Input.GetMouseButtonDown(0))
         {
@@ -69,7 +73,6 @@ public class PlugInputHandler : MonoBehaviour
         }
     }
 
-    // Calculates the force vector strictly for the Agent's Heuristic callback
     public Vector3 CalculateHeuristicForce()
     {
         if (!IsDragging || plugBody == null) return Vector3.zero;
@@ -77,13 +80,15 @@ public class PlugInputHandler : MonoBehaviour
         Vector3 currentGrabWorldPos = plugBody.transform.TransformPoint(localGrabOffset);
         Vector3 displacement = targetPosition - currentGrabWorldPos;
         
-        Vector3 rawForce = (displacement * pullForce) - (plugBody.linearVelocity * dragDamping);
+        Vector3 worldForce = (displacement * pullForce) - (plugBody.linearVelocity * dragDamping);
 
-        if (rawForce.magnitude > maxPullForce)
+        if (worldForce.magnitude > maxPullForce)
         {
-            rawForce = rawForce.normalized * maxPullForce;
+            worldForce = worldForce.normalized * maxPullForce;
         }
         
-        return rawForce / maxPullForce;
+        Vector3 normalizedWorldForce = worldForce / maxPullForce;
+        
+        return plugBody.transform.InverseTransformDirection(normalizedWorldForce);
     }
 }

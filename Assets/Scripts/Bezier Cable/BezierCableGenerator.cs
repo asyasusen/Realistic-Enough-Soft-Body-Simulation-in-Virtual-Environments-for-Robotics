@@ -307,4 +307,30 @@ public class BezierCableGenerator : MonoBehaviour
             }
         }
     }
+    
+    public void ResetCableState()
+    {
+        if (generatedBodies == null || generatedBodies.Length == 0) return;
+
+        foreach (ArticulationBody ab in generatedBodies)
+        {
+            if (ab != null)
+            {
+                ab.linearVelocity = Vector3.zero;
+                ab.angularVelocity = Vector3.zero;
+
+                if (!ab.isRoot)
+                {
+                    ab.jointPosition = new ArticulationReducedSpace(0f, 0f, 0f);
+                    ab.jointVelocity = new ArticulationReducedSpace(0f, 0f, 0f);
+                }
+            }
+        }
+
+        if (PlugBody != null)
+        {
+            PlugBody.linearVelocity = Vector3.zero;
+            PlugBody.angularVelocity = Vector3.zero;
+        }
+    }
 }

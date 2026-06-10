@@ -1,0 +1,65 @@
+{
+    "My Behavior": {
+        "checkpoints": [
+            {
+                "steps": 8499985,
+                "file_path": "results\\RJ45_Final_Attempt\\My Behavior\\My Behavior-8499985.onnx",
+                "reward": 26.904781336443765,
+                "creation_time": 1780785312.8774214,
+                "auxillary_file_paths": [
+                    "results\\RJ45_Final_Attempt\\My Behavior\\My Behavior-8499985.pt"
+                ]
+            },
+            {
+                "steps": 8999922,
+                "file_path": "results\\RJ45_Final_Attempt\\My Behavior\\My Behavior-8999922.onnx",
+                "reward": 24.730146558196456,
+                "creation_time": 1780787631.6401262,
+                "auxillary_file_paths": [
+                    "results\\RJ45_Final_Attempt\\My Behavior\\My Behavior-8999922.pt"
+                ]
+            },
+            {
+                "steps": 9499891,
+                "file_path": "results\\RJ45_Final_Attempt\\My Behavior\\My Behavior-9499891.onnx",
+                "reward": 29.677008348775196,
+                "creation_time": 1780789941.6876373,
+                "auxillary_file_paths": [
+                    "results\\RJ45_Final_Attempt\\My Behavior\\My Behavior-9499891.pt"
+                ]
+            },
+            {
+                "steps": 9999891,
+                "file_path": "results\\RJ45_Final_Attempt\\My Behavior\\My Behavior-9999891.onnx",
+                "reward": 30.612075740640815,
+                "creation_time": 1780792248.3750691,
+                "auxillary_file_paths": [
+                    "results\\RJ45_Final_Attempt\\My Behavior\\My Behavior-9999891.pt"
+                ]
+            },
+            {
+                "steps": 10000019,
+                "file_path": "results\\RJ45_Final_Attempt\\My Behavior\\My Behavior-10000019.onnx",
+                "reward": 30.612075740640815,
+                "creation_time": 1780792248.4651268,
+                "auxillary_file_paths": [
+                    "results\\RJ45_Final_Attempt\\My Behavior\\My Behavior-10000019.pt"
+                ]
+            }
+        ],
+        "final_checkpoint": {
+            "steps": 10000019,
+            "file_path": "results\\RJ45_Final_Attempt\\My Behavior.onnx",
+            "reward": 30.612075740640815,
+            "creation_time": 1780792248.4651268,
+            "auxillary_file_paths": [
+                "results\\RJ45_Final_Attempt\\My Behavior\\My Behavior-10000019.pt"
+            ]
+        }
+    },
+    "metadata": {
+        "stats_format_version": "0.3.0",
+        "mlagents_version": "0.30.0",
+        "torch_version": "2.7.1+cu118"
+    }
+}

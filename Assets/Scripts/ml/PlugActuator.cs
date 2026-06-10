@@ -27,33 +27,12 @@ public class PlugActuator : MonoBehaviour
         targetRotation = plugBody.transform.rotation;
     }
 
-    public void ApplyLinearForce(Vector3 normalizedForce)
+    public void ApplyLinearForce(Vector3 localNormalizedForce)
     {
         if (plugBody == null) return;
-        plugBody.AddForce(normalizedForce * maxPullForce, ForceMode.Acceleration);
-    }
-
-    public void ApplyRotation(float pitchInput, float rollInput)
-    {
-        if (plugBody == null) return;
-
-        Quaternion pitchDelta = Quaternion.AngleAxis(pitchInput * rotationSpeed * Time.fixedDeltaTime, plugBody.transform.right);
-        Quaternion rollDelta  = Quaternion.AngleAxis(rollInput * rotationSpeed * Time.fixedDeltaTime, plugBody.transform.up);
-        targetRotation = pitchDelta * rollDelta * targetRotation;
-
-        Quaternion deltaRot = targetRotation * Quaternion.Inverse(plugBody.transform.rotation);
-        deltaRot.ToAngleAxis(out float angle, out Vector3 axis);
-
-        if (!float.IsInfinity(axis.x) && !float.IsNaN(axis.x))
-        {
-            if (angle > 180f) angle -= 360f;
-            angle = angle * Mathf.Deg2Rad; 
-
-            Vector3 appliedTorque = axis.normalized * (angle * rotationalPullForce);
-            if (appliedTorque.magnitude > maxTorque) appliedTorque = appliedTorque.normalized * maxTorque;
-
-            plugBody.AddTorque(appliedTorque, ForceMode.Acceleration);
-        }
+        
+        Vector3 worldForce = plugBody.transform.TransformDirection(localNormalizedForce);
+        plugBody.AddForce(worldForce * maxPullForce, ForceMode.Acceleration);
     }
 
     public void SyncTargetRotation()
@@ -73,6 +52,30 @@ public class PlugActuator : MonoBehaviour
             ArticulationDrive drive = clipBody.xDrive;
             drive.target = desiredTarget;
             clipBody.xDrive = drive;
+        }
+    }
+    public void ApplyRotation(float pitchInput, float yawInput, float rollInput)
+    {
+        if (plugBody == null) return;
+
+        Quaternion pitchDelta = Quaternion.AngleAxis(pitchInput * rotationSpeed * Time.fixedDeltaTime, plugBody.transform.right);
+        Quaternion yawDelta   = Quaternion.AngleAxis(yawInput * rotationSpeed * Time.fixedDeltaTime, plugBody.transform.up);
+        Quaternion rollDelta  = Quaternion.AngleAxis(rollInput * rotationSpeed * Time.fixedDeltaTime, plugBody.transform.forward);
+        
+        targetRotation = pitchDelta * yawDelta * rollDelta * targetRotation;
+
+        Quaternion deltaRot = targetRotation * Quaternion.Inverse(plugBody.transform.rotation);
+        deltaRot.ToAngleAxis(out float angle, out Vector3 axis);
+
+        if (!float.IsInfinity(axis.x) && !float.IsNaN(axis.x))
+        {
+            if (angle > 180f) angle -= 360f;
+            angle = angle * Mathf.Deg2Rad; 
+
+            Vector3 appliedTorque = axis.normalized * (angle * rotationalPullForce);
+            if (appliedTorque.magnitude > maxTorque) appliedTorque = appliedTorque.normalized * maxTorque;
+
+            plugBody.AddTorque(appliedTorque, ForceMode.Acceleration);
         }
     }
 }

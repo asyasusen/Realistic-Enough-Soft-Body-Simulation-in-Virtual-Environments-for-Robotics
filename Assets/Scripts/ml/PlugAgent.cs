@@ -7,24 +7,21 @@ using Unity.MLAgents.Sensors;
 public class PlugAgent : Agent
 {
     [Header("Environment References")]
+    [SerializeField] private PlugEnvironmentManager envManager; 
     [SerializeField] private BezierCableGenerator cableGenerator;
     [SerializeField] private Transform socketTransform;
-    [Tooltip("Place an empty GameObject just outside the socket hole and assign it here.")]
     [SerializeField] private Transform entranceTransform; 
-    [Tooltip("Place an empty GameObject exactly at the center of the socket hole.")]
     [SerializeField] private Transform targetHoleTransform;
     
     [Header("Agent Settings")]
     public int maxPatienceSteps = 2000;
 
-    // Component References
     private PlugActuator actuator;
     private PlugInputHandler inputHandler;
     private ArticulationBody plugBody;
     private ArticulationBody clipBody;
     private Transform plugTipTransform;
 
-    // Reward State
     private int stepsSinceProgress;
     private float closestDistanceReached;
     private int highestCheckpointReached = -1; 
@@ -37,7 +34,8 @@ public class PlugAgent : Agent
 
     public override void OnEpisodeBegin()
     {
-        cableGenerator.GenerateCable();
+        envManager.ResetEnvironment(); 
+        
         FindAndSetupBodies();
         
         if (plugBody != null && clipBody != null)
@@ -49,17 +47,18 @@ public class PlugAgent : Agent
         stepsSinceProgress = 0;
         highestCheckpointReached = -1;
         
-        if (entranceTransform != null && plugBody != null)
+
+        // Frame 1 bugfix
+        if (entranceTransform != null)
         {
-            closestDistanceReached = Vector3.Distance(plugBody.transform.position, entranceTransform.position);
+            Vector3 mathematicalRestPos = cableGenerator.GetPoint(1f);
+            closestDistanceReached = Vector3.Distance(mathematicalRestPos, entranceTransform.position);
         }
     }
 
     private void FindAndSetupBodies()
     {
-        // Zero-allocation fetch straight from the generator
         plugBody = cableGenerator.PlugBody;
-
         if (plugBody != null)
         {
             plugBody.ResetCenterOfMass(); 
@@ -91,11 +90,7 @@ public class PlugAgent : Agent
                     break;
                 }
             }
-            
-            if (plugTipTransform == null) 
-                Debug.LogError("Could not find a child named 'Tip' on the Plug Prefab!");
         }
-        
     }
 
     public override void CollectObservations(VectorSensor sensor)
@@ -106,18 +101,12 @@ public class PlugAgent : Agent
             return;
         }
 
-        // 1. Relative Position (3 obs)
         sensor.AddObservation(targetHoleTransform.position - plugTipTransform.position);        
-        // 2. Relative Rotation (4 obs) - THIS IS CRITICAL
-        // It tells the agent how misaligned it is from the socket's ideal rotation
         Quaternion relativeRotation = Quaternion.Inverse(socketTransform.rotation) * plugBody.transform.rotation;
         sensor.AddObservation(relativeRotation);
-
-        // 3. Velocities (6 obs)
         sensor.AddObservation(plugBody.linearVelocity);
         sensor.AddObservation(plugBody.angularVelocity);
 
-        // 4. Clip State (1 obs)
         bool clipSqueezed = clipBody != null && Mathf.Approximately(clipBody.xDrive.target, clipBody.xDrive.upperLimit);
         sensor.AddObservation(clipSqueezed ? 1.0f : 0.0f);
     }
@@ -126,66 +115,59 @@ public class PlugAgent : Agent
     {
         if (plugBody == null) return;
 
-        Vector3 actionForce = new Vector3(
-            actions.ContinuousActions[0],
-            actions.ContinuousActions[1],
-            actions.ContinuousActions[2]
-        );
-        
+        Vector3 actionForce = new Vector3(actions.ContinuousActions[0], actions.ContinuousActions[1], actions.ContinuousActions[2]);
         actuator.ApplyLinearForce(actionForce);
 
         bool isGripped = actionForce.magnitude > 0.01f || inputHandler.IsDragging;
-
-        if (isGripped) actuator.ApplyRotation(actions.ContinuousActions[3], actions.ContinuousActions[4]);
+        if (isGripped) actuator.ApplyRotation(actions.ContinuousActions[3], actions.ContinuousActions[4], actions.ContinuousActions[5]);
         else actuator.SyncTargetRotation();
 
         actuator.ApplySqueeze(actions.DiscreteActions[0] == 1);
-
         HandleRewards();
     }
 
-    private void HandleRewards()
+private void HandleRewards()
     {
-        // 1. Math-based approach (Only useful BEFORE entering the socket)
+        float distanceToHole = 999f;
+        if (entranceTransform != null) distanceToHole = Vector3.Distance(plugTipTransform.position, entranceTransform.position);
+
         if (entranceTransform != null && highestCheckpointReached < 0) 
-        {
-            float currentDistance = Vector3.Distance(plugTipTransform.position, entranceTransform.position);            
-            if (currentDistance < closestDistanceReached)
+        {           
+            if (distanceToHole < closestDistanceReached)
             {
-                float newProgress = closestDistanceReached - currentDistance;
-                AddReward(newProgress * 1.0f); 
-                closestDistanceReached = currentDistance; 
+                AddReward((closestDistanceReached - distanceToHole) * 5.0f); 
+                closestDistanceReached = distanceToHole; 
                 stepsSinceProgress = 0; 
+            }
+            else stepsSinceProgress++;
+        }
+        else stepsSinceProgress++;
+
+        // 2. ABSOLUTE PHYSICAL ALIGNMENT (The Fix)
+        if (plugBody != null && socketTransform != null && plugTipTransform != null)
+        {
+            // Vector pointing FROM center TO tip (Forward)
+            Vector3 plugForward = (plugTipTransform.position - plugBody.transform.position).normalized;
+            // Vector pointing FROM entrance TO center (Into the socket)
+            Vector3 holeForward = (targetHoleTransform.position - entranceTransform.position).normalized;
+            
+            // Vector pointing FROM center TO clip (Up)
+            Vector3 plugUp = (clipBody.transform.position - plugBody.transform.position).normalized;
+            Vector3 socketUp = socketTransform.up; 
+
+            float forwardAlignment = Vector3.Dot(plugForward, holeForward);
+            float upAlignment = Vector3.Dot(plugUp, socketUp);
+
+            if (forwardAlignment > 0.8f && upAlignment > 0.8f)
+            {
+                AddReward(0.01f); 
             }
             else
             {
-                stepsSinceProgress++;
-            }
-        }
-        else 
-        {
-            stepsSinceProgress++;
-        }
-
-        if (plugBody != null && socketTransform != null)
-        {
-            // Calculate the absolute degree difference between plug and socket rotation
-            float alignmentAngle = Quaternion.Angle(plugBody.transform.rotation, socketTransform.rotation);
-
-            if (alignmentAngle > 27f)
-            {
-                // Punish for being misaligned (scales slightly so being 90 deg off is worse than 30)
-                float penalty = (alignmentAngle / 180f) * -0.01f; 
-                AddReward(penalty);
-            }
-            else if (highestCheckpointReached >= 0)
-            {
-                // Bonus for maintaining good alignment once inside the tunnel
-                AddReward(0.001f);
+                AddReward((forwardAlignment + upAlignment - 2f) * 0.05f);
             }
         }
 
-        // 2. Kill Switch (Patience)
         if (stepsSinceProgress >= maxPatienceSteps)
         {
             AddReward(-1.0f); 
@@ -193,8 +175,49 @@ public class PlugAgent : Agent
             return; 
         }
 
-        // Base time penalty
         AddReward(-0.0005f);
+    }
+
+    public void ReachCheckpoint(int checkpointID, float reward)
+    {
+        if (checkpointID > highestCheckpointReached)
+        {
+            Vector3 plugForward = (plugTipTransform.position - plugBody.transform.position).normalized;
+            Vector3 holeForward = (targetHoleTransform.position - entranceTransform.position).normalized;
+            
+            if (Vector3.Angle(plugForward, holeForward) < 45f) 
+            {
+                highestCheckpointReached = checkpointID;
+                AddReward(reward);
+                stepsSinceProgress = 0; 
+            }
+            else 
+            {
+                AddReward(-1.0f); 
+                EndEpisode();
+            }
+        }
+    }
+
+    public void SuccessfullyPluggedIn()
+    {
+        Vector3 plugForward = (plugTipTransform.position - plugBody.transform.position).normalized;
+        Vector3 holeForward = (targetHoleTransform.position - entranceTransform.position).normalized;
+        Vector3 plugUp = (clipBody.transform.position - plugBody.transform.position).normalized;
+        Vector3 socketUp = socketTransform.up; 
+
+        float worstAngle = Mathf.Max(Vector3.Angle(plugForward, holeForward), Vector3.Angle(plugUp, socketUp));
+
+        if (worstAngle < 20f) 
+        {
+            AddReward(10.0f);
+            EndEpisode();
+        }
+        else 
+        {
+            AddReward(-2.0f); 
+            EndEpisode();
+        }
     }
 
     public override void Heuristic(in ActionBuffers actionsOut)
@@ -203,33 +226,15 @@ public class PlugAgent : Agent
         var discreteActionsOut = actionsOut.DiscreteActions;
 
         discreteActionsOut[0] = inputHandler.IsSqueezing ? 1 : 0;
-
         Vector3 normalizedForce = inputHandler.CalculateHeuristicForce();
 
         continuousActionsOut[0] = normalizedForce.x;
         continuousActionsOut[1] = normalizedForce.y;
         continuousActionsOut[2] = normalizedForce.z;
         continuousActionsOut[3] = inputHandler.CurrentPitch;
-        continuousActionsOut[4] = inputHandler.CurrentRoll;
-    }
-    public void ReachCheckpoint(int checkpointID, float reward)
-    {
-        // Only reward if it's a new, deeper checkpoint
-        if (checkpointID > highestCheckpointReached)
-        {
-            highestCheckpointReached = checkpointID;
-            AddReward(reward);
-            
-            // Critical: Reset the death timer since the agent made legitimate progress
-            stepsSinceProgress = 0; 
-            
-            Debug.Log($"<color=cyan>Checkpoint {checkpointID} Reached! Reward given.</color>");
-        }
+        continuousActionsOut[4] = inputHandler.CurrentYaw;
+        continuousActionsOut[5] = inputHandler.CurrentRoll;
     }
 
-    public void SuccessfullyPluggedIn()
-    {
-        AddReward(10.0f);
-        EndEpisode();
-    }
+
 }
